@@ -1,0 +1,6 @@
+GSCOPE_1.0 {
+    global:
+        gscope_*;
+    local:
+        *;
+};

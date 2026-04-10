@@ -1,0 +1,8 @@
+option('tests', type: 'boolean', value: true,
+       description: 'Build test suite')
+option('cli', type: 'boolean', value: true,
+       description: 'Build gscopectl CLI tool')
+option('python_bindings', type: 'boolean', value: false,
+       description: 'Build Python CFFI bindings')
+option('seccomp', type: 'feature', value: 'auto',
+       description: 'Enable seccomp-bpf support')
