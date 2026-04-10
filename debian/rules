@@ -1,0 +1,17 @@
+#!/usr/bin/make -f
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+	meson setup build --prefix=/usr --libdir=lib/$(DEB_HOST_MULTIARCH) -Dtests=false -Dcli=true
+
+override_dh_auto_build:
+	ninja -C build
+
+override_dh_auto_install:
+	DESTDIR=$(CURDIR)/debian/tmp ninja -C build install
+
+override_dh_auto_test:
+	# Tests require root and cgroup v2
+	echo "Skipping tests (require root)"

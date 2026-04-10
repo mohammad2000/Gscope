@@ -1,0 +1,2 @@
+usr/lib/*/libgscope.so.*
+usr/bin/gscopectl

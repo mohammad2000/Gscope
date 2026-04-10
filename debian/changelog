@@ -1,0 +1,13 @@
+gscope (0.1.0-1) unstable; urgency=medium
+
+  * Initial release.
+  * Namespace isolation (PID, NET, MNT, UTS, IPC, USER, CGROUP)
+  * Cgroup v2 resource limits
+  * OverlayFS with pivot_root
+  * seccomp-bpf syscall filtering (40+ blocked)
+  * Netlink networking (bridge, veth, IP, routing)
+  * Template executor (JSON config provisioning)
+  * gscopectl CLI tool
+  * Python bindings
+
+ -- Gritiva <dev@gritiva.com>  Thu, 10 Apr 2026 12:00:00 +0000

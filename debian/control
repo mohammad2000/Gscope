@@ -1,0 +1,39 @@
+Source: gscope
+Section: admin
+Priority: optional
+Maintainer: Gritiva <dev@gritiva.com>
+Build-Depends: debhelper-compat (= 13), meson, ninja-build, pkg-config
+Standards-Version: 4.6.2
+Homepage: https://github.com/mohammad2000/Gscope
+Vcs-Browser: https://github.com/mohammad2000/Gscope
+Vcs-Git: https://github.com/mohammad2000/Gscope.git
+Rules-Requires-Root: no
+
+Package: gscope
+Architecture: linux-any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: Lightweight Linux scope isolation library
+ gscope is a production-grade C library for creating isolated execution
+ environments on Linux using namespaces, cgroups v2, OverlayFS, and
+ seccomp-bpf.
+ .
+ Features:
+  - Namespace isolation (PID, NET, MNT, UTS, IPC, USER)
+  - Cgroup v2 resource limits (CPU, memory, PIDs, I/O)
+  - OverlayFS + pivot_root
+  - seccomp-bpf syscall filtering
+  - Netlink networking (no subprocess)
+  - Template executor for automated provisioning
+  - gscopectl CLI tool
+ .
+ This package contains the shared library, CLI tool, and development headers.
+
+Package: libgscope-dev
+Architecture: linux-any
+Section: libdevel
+Depends: gscope (= ${binary:Version}), ${misc:Depends}
+Description: Lightweight Linux scope isolation library - development files
+ Development headers for libgscope.
+ .
+ This package contains the C headers needed to develop applications
+ using the gscope library.

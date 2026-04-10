@@ -1,0 +1,21 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: gscope
+Upstream-Contact: dev@gritiva.com
+Source: https://github.com/mohammad2000/Gscope
+
+Files: *
+Copyright: 2026 Gritiva
+License: Apache-2.0
+
+Files: src/template/cjson.c src/template/cJSON.h
+Copyright: 2009-2017 Dave Gamble and cJSON contributors
+License: MIT
+
+License: Apache-2.0
+ Licensed under the Apache License, Version 2.0.
+ See /usr/share/common-licenses/Apache-2.0.
+
+License: MIT
+ Permission is hereby granted, free of charge, to any person obtaining
+ a copy of this software and associated documentation files, to deal
+ in the Software without restriction.

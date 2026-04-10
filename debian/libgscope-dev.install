@@ -1,0 +1,3 @@
+usr/include/gscope/*.h
+usr/lib/*/libgscope.so
+usr/lib/*/pkgconfig/gscope.pc
