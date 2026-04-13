@@ -327,11 +327,53 @@ gscope_err_t gscope_scope_create(gscope_ctx_t *ctx,
             if (err != GSCOPE_OK) goto rollback;
         }
 
+        /* Configure veth INSIDE namespace (IP, loopback, default route, DNS) */
+        {
+            char veth_name[16];
+            snprintf(veth_name, sizeof(veth_name), "gs%us", scope->id);
+            char ip_cidr[32];
+            snprintf(ip_cidr, sizeof(ip_cidr), "%s/24", scope->ip_address);
+            char cmd[512];
+
+            /* Bring loopback up */
+            snprintf(cmd, sizeof(cmd),
+                     "ip netns exec %s ip link set lo up 2>/dev/null",
+                     scope->netns_name);
+            system(cmd);
+
+            /* Bring veth up inside namespace */
+            snprintf(cmd, sizeof(cmd),
+                     "ip netns exec %s ip link set %s up 2>/dev/null",
+                     scope->netns_name, veth_name);
+            system(cmd);
+
+            /* Assign IP to veth inside namespace */
+            snprintf(cmd, sizeof(cmd),
+                     "ip netns exec %s ip addr add %s dev %s 2>/dev/null",
+                     scope->netns_name, ip_cidr, veth_name);
+            system(cmd);
+
+            /* Add default route via gateway */
+            snprintf(cmd, sizeof(cmd),
+                     "ip netns exec %s ip route add default via %s 2>/dev/null",
+                     scope->netns_name, gw);
+            system(cmd);
+
+            /* Configure DNS */
+            snprintf(cmd, sizeof(cmd),
+                     "mkdir -p /etc/netns/%s && printf 'nameserver 8.8.8.8\\nnameserver 1.1.1.1\\n' > /etc/netns/%s/resolv.conf",
+                     scope->netns_name, scope->netns_name);
+            system(cmd);
+
+            GSCOPE_INFO(ctx, "  configured inside namespace: %s on %s via %s",
+                        scope->ip_address, veth_name, gw);
+        }
+
         /* Setup NAT for outbound connectivity */
         gscope_fw_setup_nat(ctx, "10.50.0.0/24", ctx->bridge_name);
 
-        GSCOPE_INFO(ctx, "  network: ip=%s bridge=%s",
-                    scope->ip_address, ctx->bridge_name);
+        GSCOPE_INFO(ctx, "  network: ip=%s bridge=%s ns=%s",
+                    scope->ip_address, ctx->bridge_name, scope->netns_name);
     } else if (config->net_mode == GSCOPE_NET_ISOLATED) {
         GSCOPE_DEBUG(ctx, "  [5/7] network: isolated (no external)");
     } else {
