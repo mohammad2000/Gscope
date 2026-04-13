@@ -151,33 +151,31 @@ static gscope_err_t create_named_netns(gscope_scope_t *scope)
         }
     }
     close(ns_file_fd);
-
-    /* Create new network namespace */
-    if (unshare(CLONE_NEWNET) != 0) {
-        close(orig_ns_fd);
-        unlink(netns_path);
-        return gscope_set_error_errno(GSCOPE_ERR_NAMESPACE,
-                                      "unshare(CLONE_NEWNET) failed");
-    }
-
-    /* Bind-mount /proc/self/ns/net onto the named file */
-    if (mount("/proc/self/ns/net", netns_path, "none", MS_BIND, NULL) != 0) {
-        /* Restore original namespace before returning */
-        setns(orig_ns_fd, CLONE_NEWNET);
-        close(orig_ns_fd);
-        unlink(netns_path);
-        return gscope_set_error_errno(GSCOPE_ERR_NAMESPACE,
-                                      "bind mount netns failed");
-    }
-
-    /* Switch back to original namespace */
-    if (setns(orig_ns_fd, CLONE_NEWNET) != 0) {
-        close(orig_ns_fd);
-        return gscope_set_error_errno(GSCOPE_ERR_NAMESPACE,
-                                      "setns to original netns failed");
-    }
-
+    /* Remove the empty file — ip netns add will create its own */
+    unlink(netns_path);
     close(orig_ns_fd);
+
+    /*
+     * Use 'ip netns add' instead of manual unshare+bind-mount.
+     *
+     * unshare(CLONE_NEWNET) only affects the calling thread, which is
+     * unsafe in multi-threaded processes (Python agent). 'ip netns add'
+     * is atomic and thread-safe — it forks a child that does unshare
+     * and bind-mount in a single-threaded context.
+     */
+    {
+        char cmd[256];
+        snprintf(cmd, sizeof(cmd), "ip netns add %s 2>/dev/null", name);
+        int ret = system(cmd);
+        if (ret != 0) {
+            /* Check if it was created despite error (race condition) */
+            if (access(netns_path, F_OK) != 0) {
+                return gscope_set_error(GSCOPE_ERR_NAMESPACE,
+                                        "ip netns add %s failed (exit %d)",
+                                        name, ret);
+            }
+        }
+    }
 
     /* Open the new namespace fd for later use */
     int ns_fd = open(netns_path, O_RDONLY | O_CLOEXEC);
@@ -185,14 +183,6 @@ static gscope_err_t create_named_netns(gscope_scope_t *scope)
         int idx = ns_type_index(GSCOPE_NS_NET);
         if (idx >= 0)
             scope->ns_fds[idx] = ns_fd;
-    }
-
-    /* Enable loopback inside the new namespace */
-    int new_ns_fd = open(netns_path, O_RDONLY | O_CLOEXEC);
-    if (new_ns_fd >= 0) {
-        /* We'll configure loopback when we actually enter the ns
-         * (during spawn or via netlink). For now, just save the fd. */
-        close(new_ns_fd);
     }
 
     scope->ns_active |= GSCOPE_NS_NET;
