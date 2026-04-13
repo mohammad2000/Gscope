@@ -68,7 +68,7 @@ gscope_err_t gscope_addr_add(const char *ifname, const char *addr, int prefix)
     req.ifa.ifa_family = AF_INET;
     req.ifa.ifa_prefixlen = (unsigned char)prefix;
     req.ifa.ifa_index = (int)idx;
-    req.ifa.ifa_scope = 0;  /* RT_SCOPE_UNIVERSE */
+    req.ifa.ifa_scope = 253;  /* RT_SCOPE_LINK — prevents kernel adding default route */
 
     /* IFA_LOCAL = the IP address */
     gscope_nl_add_attr(&req.nlh, (int)sizeof(req),
