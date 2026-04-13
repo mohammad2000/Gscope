@@ -393,6 +393,41 @@ gscope_err_t gscope_scope_create(gscope_ctx_t *ctx,
     }
     step = 6;
 
+    /* Step 6.5: Configure rootfs essentials (hostname, /dev/pts, /etc/hosts) */
+    {
+        char cmd[512];
+        const char *hn = config->hostname ? config->hostname
+                                          : scope->netns_name;
+
+        /* /etc/hosts — add hostname so sudo doesn't warn */
+        snprintf(cmd, sizeof(cmd),
+                 "printf '127.0.0.1\\tlocalhost\\n127.0.1.1\\t%s\\n::1\\tlocalhost\\n' "
+                 "> %s/etc/hosts",
+                 hn, scope->rootfs_merged);
+        system(cmd);
+
+        /* /etc/hostname */
+        snprintf(cmd, sizeof(cmd),
+                 "printf '%s\\n' > %s/etc/hostname",
+                 hn, scope->rootfs_merged);
+        system(cmd);
+
+        /* /dev/pts — needed for sudo pty allocation */
+        snprintf(cmd, sizeof(cmd),
+                 "mkdir -p %s/dev/pts && mount -t devpts devpts %s/dev/pts "
+                 "-o newinstance,ptmxmode=0666 2>/dev/null",
+                 scope->rootfs_merged, scope->rootfs_merged);
+        system(cmd);
+
+        /* /dev/ptmx symlink */
+        snprintf(cmd, sizeof(cmd),
+                 "ln -sf pts/ptmx %s/dev/ptmx 2>/dev/null",
+                 scope->rootfs_merged);
+        system(cmd);
+
+        GSCOPE_DEBUG(ctx, "  rootfs configured: hosts, hostname, /dev/pts");
+    }
+
     /* Step 7: Finalize */
     GSCOPE_INFO(ctx, "  [7/7] finalize");
     scope->state = GSCOPE_STATE_STOPPED;
