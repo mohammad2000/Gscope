@@ -112,15 +112,43 @@ static gscope_err_t create_named_netns(gscope_scope_t *scope)
     int ns_file_fd = open(netns_path, O_RDONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0);
     if (ns_file_fd < 0) {
         if (errno == EEXIST) {
-            /* Already exists — verify it's functional */
+            /*
+             * File exists — verify it's a REAL isolated namespace.
+             * Stale bind mounts (from crashes/restarts) point to
+             * the host network namespace, which is dangerous.
+             * Detect by checking if the namespace has host interfaces.
+             */
+            char check_cmd[256];
+            snprintf(check_cmd, sizeof(check_cmd),
+                     "ip netns exec %s ip link show enp6s18 >/dev/null 2>&1"
+                     " || ip netns exec %s ip link show eth0 >/dev/null 2>&1",
+                     name, name);
+            int has_host_iface = (system(check_cmd) == 0);
+
+            if (has_host_iface) {
+                /* Stale namespace — delete and recreate */
+                GSCOPE_INFO(ctx, "netns %s is stale (has host interfaces), recreating", name);
+                umount2(netns_path, MNT_DETACH);
+                unlink(netns_path);
+                /* Fall through to create fresh namespace below */
+                ns_file_fd = open(netns_path, O_RDONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0);
+                if (ns_file_fd < 0) {
+                    close(orig_ns_fd);
+                    return gscope_set_error_errno(GSCOPE_ERR_NAMESPACE,
+                                                  "cannot recreate %s", netns_path);
+                }
+            } else {
+                /* Namespace is functional — reuse it */
+                close(orig_ns_fd);
+                GSCOPE_DEBUG(ctx, "netns %s already exists and functional, reusing", name);
+                gscope_clear_error();
+                return GSCOPE_OK;
+            }
+        } else {
             close(orig_ns_fd);
-            GSCOPE_DEBUG(ctx, "netns %s already exists, reusing", name);
-            gscope_clear_error();
-            return GSCOPE_OK;
+            return gscope_set_error_errno(GSCOPE_ERR_NAMESPACE,
+                                          "cannot create %s", netns_path);
         }
-        close(orig_ns_fd);
-        return gscope_set_error_errno(GSCOPE_ERR_NAMESPACE,
-                                      "cannot create %s", netns_path);
     }
     close(ns_file_fd);
 
