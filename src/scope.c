@@ -297,50 +297,29 @@ gscope_err_t gscope_scope_create(gscope_ctx_t *ctx,
     if (config->net_mode == GSCOPE_NET_BRIDGE) {
         GSCOPE_INFO(ctx, "  [5/7] network setup (bridge mode)");
 
-        /* Ensure bridge exists */
-        gscope_bridge_create(ctx, ctx->bridge_name);
+        /*
+         * NOTE: Bridge creation and IP assignment are SKIPPED here.
+         * When integrated with GritivaCore, the Python gateway (scope/networking/gateway.py)
+         * manages bridge creation (br-gritiva), IP assignment, veth configuration,
+         * and routing. Having two bridges (br-gscope + br-gritiva) with the same
+         * subnet causes routing conflicts.
+         *
+         * gscope only handles: namespace, cgroup, overlayfs, process spawning.
+         * Networking is delegated to the Python layer.
+         */
+        GSCOPE_INFO(ctx, "  network: bridge setup delegated to orchestrator");
 
-        /* Bridge needs an IP (gateway) */
-        char gw[16];
-        gscope_ip_gateway(ctx, gw, sizeof(gw));
-        gscope_addr_add(ctx->bridge_name, gw, 24);
-
-        /* Safety: remove any default route via bridge that kernel may add */
-        {
-            char cmd[128];
-            snprintf(cmd, sizeof(cmd),
-                     "ip route del default via %s dev %s 2>/dev/null",
-                     gw, ctx->bridge_name);
-            system(cmd);
-        }
-
-        /* Create veth pair */
-        err = gscope_veth_create(scope);
-        if (err != GSCOPE_OK) goto rollback;
-
-        /* Move scope side to namespace */
-        err = gscope_veth_move_to_ns(scope);
-        if (err != GSCOPE_OK) goto rollback;
-
-        /* Attach host side to bridge */
-        gscope_veth_attach_bridge(scope, ctx->bridge_name);
-
-        /* Allocate IP */
+        /* Skip veth/bridge/NAT — all handled by Python gateway */
+        /* Only allocate IP for tracking */
         if (config->requested_ip) {
-            gscope_ip_alloc_specific(ctx, config->requested_ip);
             gscope_strlcpy(scope->ip_address, config->requested_ip,
                            sizeof(scope->ip_address));
         } else {
-            err = gscope_ip_alloc(ctx, scope->ip_address,
-                                   sizeof(scope->ip_address));
-            if (err != GSCOPE_OK) goto rollback;
+            gscope_ip_alloc(ctx, scope->ip_address, sizeof(scope->ip_address));
         }
 
-        /* Setup NAT */
-        gscope_fw_setup_nat(ctx, "10.50.0.0/24", ctx->bridge_name);
-
-        GSCOPE_INFO(ctx, "  network: ip=%s bridge=%s",
-                    scope->ip_address, ctx->bridge_name);
+        GSCOPE_INFO(ctx, "  network: ip=%s (delegated to orchestrator)",
+                    scope->ip_address);
     } else if (config->net_mode == GSCOPE_NET_ISOLATED) {
         GSCOPE_DEBUG(ctx, "  [5/7] network: isolated (no external)");
     } else {
