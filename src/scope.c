@@ -305,6 +305,15 @@ gscope_err_t gscope_scope_create(gscope_ctx_t *ctx,
         gscope_ip_gateway(ctx, gw, sizeof(gw));
         gscope_addr_add(ctx->bridge_name, gw, 24);
 
+        /* Safety: remove any default route via bridge that kernel may add */
+        {
+            char cmd[128];
+            snprintf(cmd, sizeof(cmd),
+                     "ip route del default via %s dev %s 2>/dev/null",
+                     gw, ctx->bridge_name);
+            system(cmd);
+        }
+
         /* Create veth pair */
         err = gscope_veth_create(scope);
         if (err != GSCOPE_OK) goto rollback;
