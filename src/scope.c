@@ -35,6 +35,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 #include <sys/stat.h>
 
@@ -839,6 +840,125 @@ gscope_err_t gscope_scope_update(gscope_scope_t *scope, const gscope_config_t *c
     };
 
     return gscope_cgroup_update(scope, &limits);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+ * ZOMBIE REAPER
+ * ═══════════════════════════════════════════════════════════════════ */
+
+/* Read first matching State: line from /proc/<pid>/status. Returns 0
+ * on success and writes one of {'R','S','D','Z','T',...} to *out. */
+static int read_proc_state(pid_t pid, char *out)
+{
+    char path[64];
+    snprintf(path, sizeof(path), "/proc/%d/status", (int)pid);
+    FILE *f = fopen(path, "r");
+    if (!f) return -1;
+    char line[256];
+    int rc = -1;
+    while (fgets(line, sizeof(line), f) != NULL) {
+        if (strncmp(line, "State:", 6) == 0) {
+            /* "State:\tZ (zombie)" — find first letter after the tab. */
+            char *p = line + 6;
+            while (*p == '\t' || *p == ' ') p++;
+            if (*p) {
+                *out = *p;
+                rc = 0;
+            }
+            break;
+        }
+    }
+    fclose(f);
+    return rc;
+}
+
+/* Walk the scope's cgroup.procs and count zombies. Returns the count
+ * (>=0) on success or -1 on cgroup read failure. */
+static int count_zombies_in_cgroup(const char *cgroup_path)
+{
+    if (!cgroup_path || !cgroup_path[0]) return -1;
+
+    char procs_path[320];
+    int n = snprintf(procs_path, sizeof(procs_path),
+                     "%s/cgroup.procs", cgroup_path);
+    if (n < 0 || (size_t)n >= sizeof(procs_path)) return -1;
+
+    FILE *f = fopen(procs_path, "r");
+    if (!f) return -1;
+
+    int zombies = 0;
+    char buf[32];
+    while (fgets(buf, sizeof(buf), f) != NULL) {
+        long pid = strtol(buf, NULL, 10);
+        if (pid <= 0) continue;
+        char st = '?';
+        if (read_proc_state((pid_t)pid, &st) == 0 && st == 'Z') {
+            zombies++;
+        }
+    }
+    fclose(f);
+    return zombies;
+}
+
+gscope_err_t gscope_scope_reap_zombies(gscope_scope_t *scope,
+                                       int *out_zombies,
+                                       int *out_reaped)
+{
+    if (!scope)
+        return gscope_set_error(GSCOPE_ERR_INVAL, "NULL scope");
+    if (out_zombies) *out_zombies = 0;
+    if (out_reaped) *out_reaped = 0;
+
+    if (scope->init_pid <= 0) {
+        /* Scope not running — nothing to reap. Not an error. */
+        gscope_clear_error();
+        return GSCOPE_OK;
+    }
+
+    int before = count_zombies_in_cgroup(scope->cgroup_path);
+    if (before < 0) {
+        return gscope_set_error_errno(
+            GSCOPE_ERR_IO,
+            "cannot read cgroup.procs at %s",
+            scope->cgroup_path);
+    }
+    if (out_zombies) *out_zombies = before;
+    if (before == 0) {
+        gscope_clear_error();
+        return GSCOPE_OK;
+    }
+
+    /* Nudge the init process — proper inits (systemd, dumb-init, tini,
+     * dockerd, anything that issues wait()/waitpid() on SIGCHLD) wake
+     * up and reap. Pathological inits ignore the signal; we still
+     * report `before` so the caller can detect the leak. */
+    if (kill(scope->init_pid, SIGCHLD) != 0 && errno != ESRCH) {
+        return gscope_set_error_errno(
+            GSCOPE_ERR_PROCESS,
+            "kill(SIGCHLD) on init pid %d failed",
+            (int)scope->init_pid);
+    }
+
+    /* Brief settle window: give init a moment to actually waitpid()
+     * its zombies before we re-measure. 50ms × 4 attempts is fast
+     * enough not to delay the agent's health-check loop perceptibly. */
+    int after = before;
+    for (int i = 0; i < 4; i++) {
+        struct timespec ts = {0, 50 * 1000 * 1000};
+        nanosleep(&ts, NULL);
+        after = count_zombies_in_cgroup(scope->cgroup_path);
+        if (after < 0) {
+            after = before; /* re-read failure: report no progress */
+            break;
+        }
+        if (after == 0) break;
+    }
+
+    int reaped = before - after;
+    if (reaped < 0) reaped = 0;
+    if (out_reaped) *out_reaped = reaped;
+    gscope_clear_error();
+    return GSCOPE_OK;
 }
 
 /* ═══════════════════════════════════════════════════════════════════

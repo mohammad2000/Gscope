@@ -159,6 +159,39 @@ gscope_state_t gscope_scope_state(gscope_scope_t *scope);
 gscope_err_t gscope_scope_update(gscope_scope_t *scope,
                                   const gscope_config_t *config);
 
+/*
+ * Zombie reaping helper.
+ *
+ * If the scope's init process is /bin/bash (or any other tool that
+ * doesn't act as a proper init) and the user's payload spawns
+ * grandchildren that exit before being reaped, those grandchildren
+ * accumulate as zombies inside the scope's pidns. Each zombie holds
+ * the kernel's PID slot, fills /proc/<pid>/ entries, and on enough
+ * accumulation crashes new fork()s in the scope with EAGAIN even
+ * when the scope's max_pids isn't strictly exceeded yet (zombies
+ * still count).
+ *
+ * gscope_scope_reap_zombies walks the scope's cgroup.procs to find
+ * zombie tasks (State == 'Z' in /proc/<pid>/status), then SIGCHLDs
+ * the scope's init process. For inits that follow standard SysV
+ * semantics (systemd, dumb-init, tini, dockerd, even most Python
+ * apps using subprocess) SIGCHLD wakes them out of their wait()
+ * blocked state and they reap descendants. For pathological inits
+ * that ignore SIGCHLD this is a no-op — the zombie count is still
+ * returned so the caller can detect the leak.
+ *
+ * Returns counts via out_zombies (before SIGCHLD) and out_reaped
+ * (zombies that disappeared after a brief settle window). Either
+ * pointer may be NULL.
+ *
+ * Cheap: one cgroup.procs read + one status file per pid in the
+ * scope. Safe to call from the agent's health-check loop every few
+ * minutes as a defense-in-depth against zombie accumulation.
+ */
+gscope_err_t gscope_scope_reap_zombies(gscope_scope_t *scope,
+                                       int *out_zombies,
+                                       int *out_reaped);
+
 #ifdef __cplusplus
 }
 #endif
