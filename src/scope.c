@@ -88,6 +88,72 @@ extern gscope_err_t gscope_exec(gscope_scope_t *, const gscope_exec_config_t *, 
 extern void gscope_process_release(gscope_exec_result_t *);
 extern int gscope_stop_process(int, pid_t, int);
 
+/* ─── Network shell-cmd helper ───────────────────────────────────── */
+
+/*
+ * Run a shell command (typically `ip netns exec ...`) and capture its
+ * exit status + combined stdout/stderr. Returns 0 on success, or
+ * GSCOPE_ERR_NETWORK on any failure mode (popen fail, non-zero exit,
+ * signal). On non-zero exit the command's output is logged via
+ * GSCOPE_ERROR so the operator sees *why* (e.g. "RTNETLINK answers:
+ * File exists" → an idempotency issue, "Cannot find device 'gs1s'" →
+ * upstream veth creation never landed).
+ *
+ * Why this exists: the Phase-5 network step previously called
+ *   `system("ip netns exec X ip ... 2>/dev/null")` and ignored the
+ *   return value. Failures (e.g., a stale netns from a previous
+ *   crashed run) silently broke connectivity but the scope reported
+ *   "running"; users hit it as "scope IP unreachable from gateway".
+ *   Capturing the error lets us bubble the failure up to the caller's
+ *   rollback path so partial-network state is cleaned up properly.
+ */
+static gscope_err_t gscope_netns_exec_check(gscope_ctx_t *ctx, const char *op,
+                                            const char *cmd)
+{
+    char buf[640];
+    /* Combine stderr→stdout so popen's read pipe sees both streams.
+     * 640 leaves room for the longest cmd seen at call sites (~512). */
+    int n = snprintf(buf, sizeof(buf), "%s 2>&1", cmd);
+    if (n < 0 || (size_t)n >= sizeof(buf)) {
+        GSCOPE_ERROR(ctx, "  network/%s: command too long for buffer", op);
+        return GSCOPE_ERR_NETWORK;
+    }
+
+    FILE *fp = popen(buf, "r");
+    if (!fp) {
+        GSCOPE_ERROR(ctx, "  network/%s: popen failed: %s",
+                     op, strerror(errno));
+        return GSCOPE_ERR_NETWORK;
+    }
+    /* Fall through; rc parsed below. */
+
+    char captured[256] = "";
+    size_t off = 0;
+    char line[128];
+    while (fgets(line, sizeof(line), fp) != NULL) {
+        size_t len = strlen(line);
+        if (off + len < sizeof(captured) - 1) {
+            memcpy(captured + off, line, len);
+            off += len;
+            captured[off] = '\0';
+        }
+        /* If output exceeds our buffer, keep draining so pclose
+         * doesn't see a SIGPIPE on the child side. */
+    }
+
+    int rc = pclose(fp);
+    if (rc != 0) {
+        /* Trim trailing newline for tidier log line. */
+        if (off > 0 && captured[off - 1] == '\n') {
+            captured[off - 1] = '\0';
+        }
+        GSCOPE_ERROR(ctx, "  network/%s: command failed (rc=%d): %s",
+                     op, rc, captured[0] ? captured : "(no output)");
+        return GSCOPE_ERR_NETWORK;
+    }
+    return GSCOPE_OK;
+}
+
 /* ─── Feature Detection ──────────────────────────────────────────── */
 
 static void detect_features(gscope_ctx_t *ctx)
@@ -335,35 +401,53 @@ gscope_err_t gscope_scope_create(gscope_ctx_t *ctx,
             snprintf(ip_cidr, sizeof(ip_cidr), "%s/24", scope->ip_address);
             char cmd[512];
 
+            /* Each step propagates GSCOPE_ERR_NETWORK on failure so the
+             * surrounding rollback path runs and we don't leave the
+             * scope in a "namespace exists but has no IP" zombie state.
+             * lo-up is included on purpose: a fresh netns where lo
+             * won't come up indicates a kernel-level breakage (broken
+             * netns file, missing CAP_NET_ADMIN, etc.) and silently
+             * continuing past it just defers the failure to the user's
+             * first ping-localhost. */
+
             /* Bring loopback up */
             snprintf(cmd, sizeof(cmd),
-                     "ip netns exec %s ip link set lo up 2>/dev/null",
+                     "ip netns exec %s ip link set lo up",
                      scope->netns_name);
-            system(cmd);
+            err = gscope_netns_exec_check(ctx, "lo-up", cmd);
+            if (err != GSCOPE_OK) goto rollback;
 
             /* Bring veth up inside namespace */
             snprintf(cmd, sizeof(cmd),
-                     "ip netns exec %s ip link set %s up 2>/dev/null",
+                     "ip netns exec %s ip link set %s up",
                      scope->netns_name, veth_name);
-            system(cmd);
+            err = gscope_netns_exec_check(ctx, "veth-up", cmd);
+            if (err != GSCOPE_OK) goto rollback;
 
             /* Assign IP to veth inside namespace */
             snprintf(cmd, sizeof(cmd),
-                     "ip netns exec %s ip addr add %s dev %s 2>/dev/null",
+                     "ip netns exec %s ip addr add %s dev %s",
                      scope->netns_name, ip_cidr, veth_name);
-            system(cmd);
+            err = gscope_netns_exec_check(ctx, "addr-add", cmd);
+            if (err != GSCOPE_OK) goto rollback;
 
             /* Add default route via gateway */
             snprintf(cmd, sizeof(cmd),
-                     "ip netns exec %s ip route add default via %s 2>/dev/null",
+                     "ip netns exec %s ip route add default via %s",
                      scope->netns_name, gw);
-            system(cmd);
+            err = gscope_netns_exec_check(ctx, "route-add", cmd);
+            if (err != GSCOPE_OK) goto rollback;
 
-            /* Configure DNS */
+            /* Configure DNS — non-fatal: if /etc/netns is unwritable we
+             * can still create the scope, the user just won't have DNS
+             * resolution. Log loudly and move on. */
             snprintf(cmd, sizeof(cmd),
                      "mkdir -p /etc/netns/%s && printf 'nameserver 8.8.8.8\\nnameserver 1.1.1.1\\n' > /etc/netns/%s/resolv.conf",
                      scope->netns_name, scope->netns_name);
-            system(cmd);
+            if (gscope_netns_exec_check(ctx, "dns-config", cmd) != GSCOPE_OK) {
+                GSCOPE_WARN(ctx, "  network: DNS resolv.conf setup failed; "
+                                 "scope will start without DNS");
+            }
 
             GSCOPE_INFO(ctx, "  configured inside namespace: %s on %s via %s",
                         scope->ip_address, veth_name, gw);
