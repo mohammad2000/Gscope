@@ -102,11 +102,18 @@ void gscope_ip_reserve_live(gscope_ctx_t *ctx)
 {
     if (!ctx) return;
     pthread_mutex_lock(&ctx->ip_alloc.lock);
-    const char *cmds[2] = {
+    const char *cmds[3] = {
         "ip -o -4 addr show 2>/dev/null",
         "ip -o -4 route show 2>/dev/null",
+        /* Per-scope IPs live INSIDE each network namespace and are invisible to
+         * the host's `ip addr`/`ip route`. During coexistence with the legacy
+         * Python scope path (whose veths sit in `scope-<id>` netns) we MUST scan
+         * every netns too, or we hand out an address already held by a live
+         * legacy scope (e.g. 10.50.0.10) and collide on the shared bridge. */
+        "for ns in $(ip netns list 2>/dev/null | awk '{print $1}'); do "
+        "ip netns exec \"$ns\" ip -o -4 addr show 2>/dev/null; done",
     };
-    for (int ci = 0; ci < 2; ci++) {
+    for (int ci = 0; ci < 3; ci++) {
         FILE *fp = popen(cmds[ci], "r");
         if (!fp) continue;
         char line[512];
