@@ -80,6 +80,9 @@ class GscopeScopeManager:
             username = config.get("username", "root")
             hostname = config.get("hostname")
             ip = config.get("mesh_ip") or config.get("ip_address")
+            # Reuse the host's existing bridge (legacy br-gritiva) so gscope does not
+            # create a second bridge at the same 10.50.0.1/24 gateway (conflict).
+            bridge = config.get("bridge_name") or "br-gritiva"
 
             # Map isolation level
             iso_map = {
@@ -117,6 +120,7 @@ class GscopeScopeManager:
                 ip=ip,
                 isolation=isolation,
                 privilege=privilege,
+                bridge=bridge,
             )
 
             self._scopes[scope_id] = scope

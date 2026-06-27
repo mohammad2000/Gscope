@@ -277,7 +277,8 @@ class Context:
                ip: Optional[str] = None,
                net_mode: int = NetMode.BRIDGE,
                isolation: int = Isolation.STANDARD,
-               privilege: int = Privilege.STANDARD) -> Scope:
+               privilege: int = Privilege.STANDARD,
+               bridge: Optional[str] = None) -> Scope:
         """Create a new scope."""
 
         config = gscope_config_t()
@@ -302,6 +303,8 @@ class Context:
             config.hostname = hostname.encode()
         if ip:
             config.requested_ip = ip.encode()
+        if bridge:
+            config.bridge_name = bridge.encode()
 
         scope_handle = gscope_scope_t()
         err = self._lib.gscope_scope_create(
