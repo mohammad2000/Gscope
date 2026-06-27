@@ -383,6 +383,13 @@ gscope_err_t gscope_scope_create(gscope_ctx_t *ctx,
         /* Attach host side to bridge */
         gscope_veth_attach_bridge(scope, ctx->bridge_name);
 
+        /* Reserve IPs already live on the host (foreign /30 mesh veths from
+         * gmeshd, assigned addresses) BEFORE allocating, so we never hand a
+         * scope an IP a co-tenant in the shared 10.50.0.0/24 already owns — the
+         * more-specific /30 route would otherwise hijack it and the scope would
+         * be unreachable from the gateway. */
+        gscope_ip_reserve_live(ctx);
+
         /* Allocate IP for scope */
         if (config->requested_ip) {
             gscope_ip_alloc_specific(ctx, config->requested_ip);

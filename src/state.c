@@ -263,6 +263,13 @@ int gscope_state_restore_all(gscope_ctx_t *ctx)
         json_read_str(json, "netns_name", scope->netns_name, sizeof(scope->netns_name));
         json_read_str(json, "cgroup_path", scope->cgroup_path, sizeof(scope->cgroup_path));
         json_read_str(json, "ip_address", scope->ip_address, sizeof(scope->ip_address));
+        /* Drift fix: re-reserve this restored scope's IP in the allocator bitmap.
+         * Restore previously repopulated only metadata, leaving the bitmap empty —
+         * so after a restart a freshly-created scope could be handed an IP a
+         * restored scope already owns (duplicate IP → the older scope's
+         * veth/route silently breaks). Mark it allocated now. */
+        if (scope->ip_address[0])
+            (void)gscope_ip_alloc_specific(ctx, scope->ip_address);
         json_read_str(json, "veth_host", scope->veth_host, sizeof(scope->veth_host));
         json_read_str(json, "veth_scope", scope->veth_scope, sizeof(scope->veth_scope));
         json_read_str(json, "rootfs_lower", scope->rootfs_lower, sizeof(scope->rootfs_lower));

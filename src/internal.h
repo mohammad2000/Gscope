@@ -135,6 +135,19 @@ gscope_err_t gscope_set_error_errno(gscope_err_t code, const char *fmt, ...)
  */
 void gscope_clear_error(void);
 
+/*
+ * IP allocator (net/ip_alloc.c). Declared here (not just as file-local externs
+ * in scope.c) so state.c can re-reserve a restored scope's IP in the bitmap.
+ */
+gscope_err_t gscope_ip_alloc(gscope_ctx_t *ctx, char *out_ip, size_t ip_size);
+gscope_err_t gscope_ip_alloc_specific(gscope_ctx_t *ctx, const char *ip_str);
+gscope_err_t gscope_ip_free(gscope_ctx_t *ctx, const char *ip_str);
+void gscope_ip_gateway(gscope_ctx_t *ctx, char *out, size_t size);
+/* Reserve every IP currently live on the host inside our /24 (foreign /30 mesh
+ * veths, assigned addresses) so allocation never collides with a co-tenant
+ * (e.g. gmeshd). Call right before allocating in the scope-create path. */
+void gscope_ip_reserve_live(gscope_ctx_t *ctx);
+
 /* ─── Logging (internal) ─────────────────────────────────────────── */
 
 void gscope_log(gscope_ctx_t *ctx, gscope_log_level_t level,
