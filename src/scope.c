@@ -364,7 +364,17 @@ gscope_err_t gscope_scope_create(gscope_ctx_t *ctx,
     if (config->net_mode == GSCOPE_NET_BRIDGE) {
         GSCOPE_INFO(ctx, "  [5/7] network setup (bridge mode)");
 
-        /* Ensure bridge exists */
+        /* Honor an explicit bridge name from the config (e.g. reuse the host's
+         * existing br-gritiva) instead of always forcing the built-in br-gscope.
+         * Forcing br-gscope creates a SECOND bridge at the same gateway IP
+         * (10.50.0.1/24) as a co-tenant bridge → duplicate-IP route conflict that
+         * breaks both. Reusing the caller's bridge lets gscope drop into an
+         * existing host topology cleanly (required to replace the legacy path). */
+        if (config->bridge_name && config->bridge_name[0])
+            gscope_strlcpy(ctx->bridge_name, config->bridge_name,
+                           sizeof(ctx->bridge_name));
+
+        /* Ensure bridge exists (idempotent if already present) */
         gscope_bridge_create(ctx, ctx->bridge_name);
 
         /* Bridge needs an IP (gateway) for scope connectivity */
